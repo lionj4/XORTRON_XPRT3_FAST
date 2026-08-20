@@ -1,0 +1,108 @@
+version: '3.9'
+
+services:
+  # Main application container
+  xortron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xortron-xprt3
+    ports:
+      - "8888:8888"  # Jupyter Lab
+      - "8000:8000"  # API server
+      - "8080:8080"  # Web interface
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./results:/app/results
+      - ./configs:/app/configs
+      - ./scripts:/app/scripts
+    environment:
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-xortron2026}
+      - PYTHONUNBUFFERED=1
+    networks:
+      - xortron-network
+    restart: unless-stopped
+    command: >
+      bash -c "
+        echo 'XORTRON_XPRT3_FAST Framework Starting...' &&
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+      "
+
+  # PostgreSQL for result storage
+  postgres:
+    image: postgres:15-alpine
+    container_name: xortron-postgres
+    environment:
+      POSTGRES_DB: xortron
+      POSTGRES_USER: xortron
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-xortron2026}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - xortron-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xortron"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching & task queue
+  redis:
+    image: redis:7-alpine
+    container_name: xortron-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - xortron-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch for log indexing (optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: xortron-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - xortron-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kibana for visualization (optional)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: xortron-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - xortron-network
+    restart: unless-stopped
+
+networks:
+  xortron-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
